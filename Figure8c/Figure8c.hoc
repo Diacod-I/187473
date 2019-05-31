@@ -1,0 +1,227 @@
+
+celsius = 35
+
+//
+// C fiber model - Figure 8c - Effect of pumps on spike failure at T-juntion
+//
+// Sundt et. al JNP 2015
+//
+
+// SK is off with profiles and nadifl is everywhere
+
+//////////////////// VARIABLES /////////////////////
+
+
+
+tstop = 400
+
+
+FREQ = 100		 	// Stimulation frequency in Hz
+NPULSES = 21			// Number of pulses for stimulation
+
+NAV = .04 			// Na channel density
+KV = .04 			// K channel density
+
+GCAL = 0.00025			// CaL conductance
+GSK = .001			// SK conductance  0.0002
+SKTAU = 500			// SK calcium time constant
+
+CENTRAL_DIAM = 0.4
+
+PUMP = 1
+PUMPDENSITY = .001
+
+/////////////////   MORPHOLOGY ///////////////////////
+
+create peri, tjcentral, tjperi, stem, soma, central
+
+peri {nseg=100 L=5000 diam = .8}			// peripherial axon
+tjperi {nseg=100 L=100 diam = .8}		   	// tjunction axon
+tjcentral {nseg=100 L=100 diam = CENTRAL_DIAM}		// tjunction axon
+central {nseg=100 L=5000 diam = CENTRAL_DIAM}		// central axon
+stem {nseg=100 L=150 diam = 1.4}			// stem axon
+soma {nseg=1 L=25 diam = 25}				// soma
+
+
+//////// Connectivity //////////
+
+peri connect tjperi(0),1
+tjperi connect stem(0),1
+stem connect soma(0),1
+tjperi connect tjcentral(0),1
+tjcentral connect central(0),1
+
+objref DRG   					// create new object called DRG
+DRG = new SectionList()				// Define DRG as a list of sections
+
+tjperi DRG.append()				// DRG sections: tjunction, stem, and soma   
+tjcentral DRG.append()  
+stem DRG.append()				
+//soma DRG.append()
+
+/////////////////// INITIALIZATION /////////////////
+
+
+///// GENERAL INITIALIZATION /////////
+
+forall {				// for all compartments
+
+       insert nahh
+       gnabar_nahh = NAV
+       mshift_nahh = -6		// NaV1.7/1.8 channelshift
+       hshift_nahh = 6		// NaV1.7/1.8 channelshift
+
+	insert borgkdr			// insert delayed rectifier K channels
+	gkdrbar_borgkdr = KV		// density of K channels
+	ek = -80	  		// K equilibrium potential
+
+
+
+	insert pas			// insert leak channels	
+	g_pas = 1/10000			// set Rm = 10000 ohms-cm2
+	v = -60				// set Vrest
+
+	Ra = 100			// intracellular resistance
+}
+
+access soma				// work only with the soma
+gnabar_nahh = .02			// 50% lower Na channel density
+insert cal
+gcalbar_cal = GCAL
+
+insert SK
+gskbar_SK = GSK
+sstau_SK = SKTAU
+
+proc init(){				// INITIALIZATION FUNCTION
+
+
+
+  forall {
+       v=-60				// VREST FOR ALL COMPARTMENTS
+
+       finitialize(v)			// reset all state variables
+       fcurrent()     			// calculate all currents
+       	
+       e_pas = v + (ina + ik)/g_pas	// calculate leak equilibrium potential
+  }
+
+  access soma
+  e_pas = v + (ina+ik)/g_pas		// remember to add ica if needed
+
+
+}			/// end of initialization
+
+
+forsec DRG{
+
+
+if (PUMP == 1) {
+
+       insert kextern
+
+       wid_kextern = 700
+
+       insert nadifl
+
+
+      insert pump
+      pumpbar_pump = PUMPDENSITY
+
+      }
+}
+
+init()				    // initialize
+
+forsec DRG {
+
+if (PUMP == 1){
+
+	ko = 3.72
+	ki = 110
+	nao = 119
+
+	kinitial_kextern = ko
+	nainitial_kextern = nao
+
+       nai = 15
+       nai_nadifl = nai
+
+
+       fcurrent()
+       e_pas = v + (ina+ik)/g_pas		// remember to add ica if needed
+
+       }
+}
+
+
+wopen("Fig8coutput.dat")		    // Open file to write results
+
+
+access soma
+objectvar somastim
+access soma
+somastim = new IClamp(.5)
+somastim.del = 5
+somastim.dur = 1000
+somastim.amp = 0
+
+///////////////////////// STIMULATE PERIPHERAL AXON /////////////////////
+
+access peri		  	    // Work with peripheral axon
+objectvar stim			    // create object called stim
+stim = new IClamp(.2)		    // Define stim as a current clamp (IClamp) at position 0.2
+stim.del = 5			    // Stimulus delay
+stim.dur = tstop		    // Duration of the stimulus
+stim.amp = 0			    // Amplitude of the stimulus starts as zero.
+
+PERIOD = 1000/FREQ		    // Define period between stimuli
+countdown = 0			    // Spike interval variable
+pulsecount = NPULSES		    // Spike number variable
+
+t=0	     			    // Set time variable (t) to zero
+dt = 0.025			    // Time step in msec
+access soma
+
+
+double maxx[22]
+for i=0,21 maxx[i] = 1e6
+
+
+access tjcentral
+
+while (t<tstop){		       	   		 // Simulation Loop starts here
+
+
+    if (t>300){      	 
+      	 for i=0,10 {
+	     if (tjperi.ina(i/10) < maxx[i]){
+	     	 maxx[i] = tjperi.ina(i/10)
+		 }
+	     if (tjcentral.ina(i/10) < maxx[i+11]) {
+	     	maxx[i+11] = tjcentral.ina(i/10)
+		}
+	 }
+
+      }  
+
+      stim.amp = 0					 // Stimulation amplitude is set to zero
+
+      if ((t>=100) && (pulsecount > 0)){			 // After 50 msec, start stimulating
+
+       	 if ((countdown <= 0) && (countdown > -1)) stim.amp = .2     // Stimulate 1 ms pulse
+
+	 if (countdown <= -1){	 // done with this pulse      	     // End of 1 ms pulse
+	 	  countdown = PERIOD	      	   		     // Reset interval variable
+	  	  pulsecount -= 1				     // Decrement count of pulses
+	 }
+      }
+
+     countdown -= dt		// Decrement interval variable
+
+     fprint("%g %g %g %g %g %g\n",t,tjcentral.v(.1), tjcentral.ina(.1),  tjcentral.ena(.1), tjcentral.ik(.1), tjcentral.ek(.1))
+
+     fadvance()	      	 	// Advance simulation one time step	    
+
+}
+

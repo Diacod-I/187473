@@ -1,0 +1,5 @@
+//moddir mod
+load_file("nrngui.hoc")
+chdir("Figure5d")
+load_file("Figure5d.hoc")
+system("python Plot5d.py")
